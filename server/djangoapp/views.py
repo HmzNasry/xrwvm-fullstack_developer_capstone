@@ -7,7 +7,7 @@ from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib.auth import logout
 from django.contrib import messages
 from datetime import datetime
-
+import requests
 from django.http import JsonResponse
 from django.contrib.auth import login, authenticate
 import logging
@@ -62,9 +62,43 @@ def logout_request(request):
     return JsonResponse(data)
 
 # Create a `registration` view to handle sign up request
-# @csrf_exempt
-# def registration(request):
-# ...
+@csrf_exempt 
+def registration(request): 
+    if request.method == "POST":
+        try:
+            data = json.loads(request.body)
+            username = data.get('userName')
+            password = data.get('password')
+            first_name = data.get('firstName', '')
+            last_name = data.get('lastName', '')
+            email = data.get('email', '')
+
+            if not username or not password:
+                return JsonResponse({"status": "error", "message": "Username and password are required."}, status=400)
+
+            if User.objects.filter(username=username).exists():
+                return JsonResponse({"status": "error", "message": "An account with this username already exists."}, status=400)
+            
+            user = User.objects.create_user(
+                username=username,
+                password=password,
+                first_name=first_name,
+                last_name=last_name,
+                email=email
+            )
+            
+
+            login(request, user) 
+            
+            return JsonResponse({"status": "success", "userName": username, "message": "Registration successful."}, status=201)
+
+        except json.JSONDecodeError:
+            return JsonResponse({"status": "error", "message": "Invalid JSON format."}, status=400)
+        except Exception as e:
+            logger.error(f"Registration error: {e}")
+            return JsonResponse({"status": "error", "message": f"An error occurred: {e}"}, status=500)
+    else:
+        return JsonResponse({"status": "error", "message": "Only POST method is allowed for registration."}, status=405)
 
 # # Update the `get_dealerships` view to render the index page with
 # a list of dealerships
@@ -101,13 +135,29 @@ def get_dealer_details(request, dealer_id):
 # Create a `add_review` view to submit a review
 @csrf_exempt
 def add_review(request):
-    if request.user.is_anonymous == False:
-        data = json.loads(request.body)
+    if not request.user.is_authenticated:
+        return JsonResponse({"status": 403, "message": "Unauthorized - User not logged in"})
+
+    if request.method == 'POST':
         try:
-            response = post_review(data)
-            return JsonResponse({"status": 200})
-        except:
-            return JsonResponse({"status": 401, "message": "Error in posting review"})
+            data = json.loads(request.body)
+            backend_response = post_review(data) 
+            
+            print(f"--- Backend response received in add_review view: {backend_response}")
+
+            if backend_response and not backend_response.get('error'):
+                return JsonResponse({"status": 200, "message": "Review posted successfully", "data_from_backend": backend_response})
+            else:
+                error_message = backend_response.get('message', backend_response.get('details', 'Unknown error posting review to backend'))
+                # Determine a more appropriate status code if possible from backend_response
+                status_code_from_backend = backend_response.get('status_code', 400) if isinstance(backend_response, dict) else 400
+                return JsonResponse({"status": status_code_from_backend, "message": f"Failed to post review: {error_message}"})
+
+        except json.JSONDecodeError:
+            return JsonResponse({"status": 400, "message": "Invalid JSON in request body"})
+        except Exception as e:
+            logger.error(f"Error in add_review view: {e}") # Make sure logger is defined
+            return JsonResponse({"status": 500, "message": "Internal server error in add_review view"})
     else:
-        return JsonResponse({"status": 403, "message": "Unauthorized"})
+        return JsonResponse({"status": 405, "message": "Method not allowed"})
 # ...
